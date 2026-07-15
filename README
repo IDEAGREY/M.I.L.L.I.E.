@@ -43,4 +43,4 @@ MILLIE watches WiFi and BLE signals around you, classifies suspicious devices (h
 Open Termux and run:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/yourusername/millie/main/setup_millie.sh | bash
+curl -sSL https://raw.githubusercontent.com/IDEAGREY/M.I.L.L.I.E./main/setup_millie.sh | bash
