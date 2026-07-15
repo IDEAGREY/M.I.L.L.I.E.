@@ -1,5 +1,5 @@
 /*
- * SENTINEL — ESP32 CYD (ESP32-2432S028R)
+ * MILLIE — ESP32 CYD (ESP32-2432S028R)
  * WiFi promiscuous sniffer + BLE scanner (time-sliced) + CYD display,
  * streaming a FULL firehose of devices over USB serial to the phone.
  *
@@ -268,7 +268,7 @@ void drawLog(){
 }
 void drawHeader(){
   tft.fillRect(0,0,SCR_W,22,C_BG);
-  tft.setTextColor(C_GREEN,C_BG);tft.setTextSize(1);tft.setCursor(2,3);tft.print("SENTINEL");
+  tft.setTextColor(C_GREEN,C_BG);tft.setTextSize(1);tft.setCursor(2,3);tft.print("MILLIE");
   tft.setTextColor(radioWifi?C_CYAN:C_BLUE,C_BG);tft.setCursor(84,3);
   if(radioWifi)tft.printf("WIFI CH%02d",curChannel); else tft.print("BLE SCAN");
   // Proves the ESP itself is alive + transmitting, independent of the phone.
@@ -322,7 +322,7 @@ void setup(){
   esp_wifi_set_mode(WIFI_MODE_NULL);
   esp_wifi_start();delay(150);
 
-  Serial.println("{\"_status\":\"sentinel multi boot\"}");
+  Serial.println("{\"_status\":\"MILLIE multi boot\"}");
   sliceStart=millis();
   startWifiSlice();
 }
