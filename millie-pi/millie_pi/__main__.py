@@ -3,17 +3,18 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import time
 
 from . import __version__
+from .active_node import ActiveNode
 from .config import load_config
-from .hub_server import create_app
 from .phone_client import PhoneClient
-from .storage import Storage
-from .sync_worker import SyncWorker
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="MILLIE Pi — CIVOPS RF hub")
+    parser = argparse.ArgumentParser(
+        description="MILLIE Pi — native RF sensor, pushes to phone (no ESP, no Pi dashboard)"
+    )
     parser.add_argument("--config", "-c", help="Path to config.yaml")
     parser.add_argument("--discover", action="store_true", help="Find MILLIE phone and exit")
     parser.add_argument("--version", action="version", version=f"millie-pi {__version__}")
@@ -24,7 +25,6 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
     cfg = load_config(args.config)
-    storage = Storage(cfg["hub"]["data_dir"])
     phone = PhoneClient(cfg.get("phone", {}).get("url", ""))
 
     if args.discover:
@@ -35,21 +35,21 @@ def main(argv: list[str] | None = None) -> int:
         print("MILLIE phone not found on scanned subnets", file=sys.stderr)
         return 1
 
-    worker = SyncWorker(cfg, storage, phone)
-    worker.start()
+    node = ActiveNode(cfg, phone)
+    node.start()
 
-    app = create_app(cfg, storage, phone, worker)
-    host = cfg["hub"]["host"]
-    port = int(cfg["hub"]["port"])
-    pi_ip = PhoneClient.local_ip()
-    logging.getLogger("millie_pi").info(
-        "MILLIE Pi hub on http://%s:%s  (LAN: http://%s:%s)",
-        host,
-        port,
-        pi_ip,
-        port,
+    log = logging.getLogger("millie_pi")
+    log.info(
+        "Pi RF node running — pushing to %s every %ss (Ctrl+C to stop)",
+        cfg.get("phone", {}).get("url", "?"),
+        cfg.get("phone", {}).get("push_seconds", 2),
     )
-    app.run(host=host, port=port, threaded=True)
+    log.info("Phone dashboard shows PI RF devices with source pi-rf")
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        node.stop()
     return 0
 
 

@@ -13,7 +13,10 @@ echo "   venv:   $VENV"
 
 export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update -qq || true
-sudo apt-get install -y python3 python3-venv python3-pip python3-full python3-dev git rsync
+sudo apt-get install -y python3 python3-venv python3-pip python3-full python3-dev git rsync \
+  wireless-tools iw bluez bluez-tools
+# Optional promiscuous monitor mode (USB Alfa dongle):
+# sudo apt-get install -y aircrack-ng
 
 mkdir -p "$PREFIX" "$CONFIG_DIR"
 if [ ! -d "$VENV" ]; then

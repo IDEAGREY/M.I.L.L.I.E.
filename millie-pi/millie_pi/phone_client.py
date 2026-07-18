@@ -111,6 +111,9 @@ class PhoneClient:
     def civops_command(self, cmd: str, arg1: str = "", arg2: str = "") -> tuple[bool, dict[str, Any] | None, str]:
         return self._post("/api/civops/command", {"cmd": cmd, "arg1": arg1, "arg2": arg2})
 
+    def push_node(self, payload: dict[str, Any]) -> tuple[bool, dict[str, Any] | None, str]:
+        return self._post("/api/civops/node", payload)
+
     @staticmethod
     def local_ip() -> str:
         try:
