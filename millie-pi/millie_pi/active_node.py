@@ -5,10 +5,9 @@ import threading
 import time
 from typing import Any
 
+from . import __version__
 from .phone_client import PhoneClient
 from .rf_scanner import RfScanner
-
-log = logging.getLogger("millie_pi.active_node")
 
 
 class ActiveNode:
@@ -91,6 +90,7 @@ class ActiveNode:
                 "node": self.node_id,
                 "label": self.node_label,
                 "node_ip": PhoneClient.local_ip(),
+                "millie_pi_version": __version__,
                 "rf": self.scanner.status(),
                 "events": events,
             }

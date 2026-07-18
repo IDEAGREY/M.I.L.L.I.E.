@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 import threading
@@ -53,6 +54,10 @@ class RfScanner:
         self.ble_enabled = bool(rf.get("ble_scan", True))
         self.monitor_enabled = bool(rf.get("monitor_scan", False)) and bool(self.monitor_iface)
         self.use_sudo = bool(rf.get("use_sudo", True))
+        self.scan_script = os.environ.get(
+            "MILLIE_RF_SCAN",
+            str(Path(__file__).resolve().parent / "rf-scan.sh"),
+        )
         self._seen: dict[str, float] = {}
         self._dedupe_s = float(rf.get("dedupe_seconds", 6))
         self._last_wifi = 0.0
@@ -244,6 +249,7 @@ class RfScanner:
 
     def _wifi_scan(self) -> tuple[list[RfEvent], str, str]:
         attempts: list[tuple[str, callable]] = [
+            ("shell", self._wifi_shell_script),
             ("wpa_cli", self._wifi_wpa_cli),
             ("iwlist", self._wifi_iwlist),
             ("iw-trigger", self._wifi_iw_trigger_dump),
@@ -262,21 +268,28 @@ class RfScanner:
             errors.append(f"{name}: 0 APs")
         return [], "; ".join(errors[-4:]), ""
 
-    def _wifi_wpa_cli(self) -> list[RfEvent]:
-        variants = self._cmds(["wpa_cli", "-i", self.wifi_iface, "scan"], False)
-        variants += self._cmds(["wpa_cli", "-i", self.wifi_iface, "scan"], True)
-        for cmd in variants:
-            self._run(cmd, timeout=6)
-        time.sleep(2.5)
-        out, err, rc, _ = self._run_first(
-            self._cmds(["wpa_cli", "-i", self.wifi_iface, "scan_results"], False)
-            + self._cmds(["wpa_cli", "-i", self.wifi_iface, "scan_results"], True),
-            timeout=12,
+    def _wifi_shell_script(self) -> list[RfEvent]:
+        script = self.scan_script
+        if not Path(script).exists():
+            raise RuntimeError(f"missing scan script: {script}")
+        out, err, rc = self._run(
+            ["sudo", "-n", "bash", script, self.wifi_iface, "wifi"],
+            timeout=50,
         )
         if not out.strip():
-            raise RuntimeError(err or "wpa_cli empty")
+            raise RuntimeError(err or f"shell scan empty rc={rc}")
         events: list[RfEvent] = []
-        for line in out.splitlines():
+        if "===WPA===" in out:
+            events.extend(self._parse_wpa_results(out.split("===WPA===", 1)[1].split("===", 1)[0]))
+        if not events and "===IWLIST===" in out:
+            events.extend(self._parse_iwlist_section(out.split("===IWLIST===", 1)[1].split("===", 1)[0]))
+        if not events and "===IW===" in out:
+            events.extend(self._parse_iw_scan(out.split("===IW===", 1)[1].split("===", 1)[0]))
+        return events
+
+    def _parse_wpa_results(self, block: str) -> list[RfEvent]:
+        events: list[RfEvent] = []
+        for line in block.splitlines():
             line = line.strip()
             if not line or line.startswith("bssid"):
                 continue
@@ -295,29 +308,38 @@ class RfScanner:
                 freq = None
                 rssi = None
             ssid = parts[4] if len(parts) > 4 else ""
-            ch = self._freq_to_ch(freq) if freq else None
             events.append(
                 RfEvent(
                     kind="wifi",
                     mac=mac,
                     rssi=rssi,
                     ssid=ssid,
-                    channel=ch,
+                    channel=self._freq_to_ch(freq) if freq else None,
                     ftype="beacon",
-                    extra={"pi_scan": "wpa_cli"},
+                    extra={"pi_scan": "shell-wpa"},
                 )
             )
         return events
 
-    def _wifi_iwlist(self) -> list[RfEvent]:
-        out, err, rc, cmd = self._run_first(
-            self._cmds(["iwlist", self.wifi_iface, "scan"], False)
-            + self._cmds(["iwlist", self.wifi_iface, "scan"], True),
-            timeout=45,
+    def _parse_iwlist_section(self, block: str) -> list[RfEvent]:
+        return self._parse_iwlist_text(block)
+
+    def _wifi_wpa_cli(self) -> list[RfEvent]:
+        variants = self._cmds(["wpa_cli", "-i", self.wifi_iface, "scan"], False)
+        variants += self._cmds(["wpa_cli", "-i", self.wifi_iface, "scan"], True)
+        for cmd in variants:
+            self._run(cmd, timeout=6)
+        time.sleep(2.5)
+        out, err, rc, _ = self._run_first(
+            self._cmds(["wpa_cli", "-i", self.wifi_iface, "scan_results"], False)
+            + self._cmds(["wpa_cli", "-i", self.wifi_iface, "scan_results"], True),
+            timeout=12,
         )
         if not out.strip():
-            raise RuntimeError(err or "iwlist empty")
-        events: list[RfEvent] = []
+            raise RuntimeError(err or "wpa_cli empty")
+        return self._parse_wpa_results(out)
+
+    def _parse_iwlist_text(self, out: str) -> list[RfEvent]:
         mac = ""
         ssid = ""
         rssi: int | None = None
@@ -366,6 +388,16 @@ class RfScanner:
                 )
             )
         return events
+
+    def _wifi_iwlist(self) -> list[RfEvent]:
+        out, err, rc, cmd = self._run_first(
+            self._cmds(["iwlist", self.wifi_iface, "scan"], False)
+            + self._cmds(["iwlist", self.wifi_iface, "scan"], True),
+            timeout=45,
+        )
+        if not out.strip():
+            raise RuntimeError(err or "iwlist empty")
+        return self._parse_iwlist_text(out)
 
     def _wifi_nmcli(self) -> list[RfEvent]:
         for cmd in self._cmds(["nmcli", "dev", "wifi", "rescan", "ifname", self.wifi_iface], False):
@@ -499,6 +531,7 @@ class RfScanner:
 
     def _ble_scan(self) -> tuple[list[RfEvent], str, str]:
         attempts: list[tuple[str, callable]] = [
+            ("shell", self._ble_shell_script),
             ("hcitool", self._ble_hcitool),
             ("bluetoothctl", self._ble_bluetoothctl),
         ]
@@ -513,6 +546,38 @@ class RfScanner:
                 return events, "", name
             errors.append(f"{name}: 0 devices")
         return [], "; ".join(errors[-3:]), ""
+
+    def _ble_shell_script(self) -> list[RfEvent]:
+        script = self.scan_script
+        if not Path(script).exists():
+            raise RuntimeError(f"missing scan script: {script}")
+        out, err, rc = self._run(
+            ["sudo", "-n", "bash", script, self.wifi_iface, "ble"],
+            timeout=20,
+        )
+        if not out.strip():
+            raise RuntimeError(err or "ble shell empty")
+        events: list[RfEvent] = []
+        block = out.split("===BLE===", 1)[-1]
+        for line in block.splitlines():
+            line = line.strip()
+            if not line or line.startswith("LE Scan"):
+                continue
+            if line.startswith("Device "):
+                parts = line.split(None, 2)
+                if len(parts) >= 2 and self.MAC_RE.fullmatch(parts[1]):
+                    name = parts[2] if len(parts) > 2 else ""
+                    events.append(
+                        RfEvent(kind="ble", mac=parts[1].upper(), name=name, extra={"pi_scan": "shell-ble"})
+                    )
+                continue
+            parts = line.split()
+            if parts and self.MAC_RE.fullmatch(parts[0]):
+                name = " ".join(parts[1:]) if len(parts) > 1 else ""
+                events.append(
+                    RfEvent(kind="ble", mac=parts[0].upper(), name=name, extra={"pi_scan": "shell-ble"})
+                )
+        return events
 
     def _ble_hcitool(self) -> list[RfEvent]:
         out, err, rc, _ = self._run_first(

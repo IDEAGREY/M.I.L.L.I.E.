@@ -33,18 +33,20 @@ if [ ! -f "$CONFIG_DIR/config.yaml" ]; then
   echo "Wrote $CONFIG_DIR/config.yaml"
 fi
 
-# Passwordless sudo for RF scans (non-interactive subprocess needs this)
+# Passwordless sudo for RF scan script (required — scans fail without this)
+SCAN_SCRIPT="$PREFIX/rf-scan.sh"
+cp "$ROOT/millie_pi/rf-scan.sh" "$SCAN_SCRIPT"
+chmod +x "$SCAN_SCRIPT"
 SUDOERS="/etc/sudoers.d/millie-pi-rf"
-if [ ! -f "$SUDOERS" ]; then
-  echo "Installing passwordless sudo for RF scan tools..."
-  printf '%s ALL=(ALL) NOPASSWD: /usr/sbin/iw, /usr/bin/iw, /usr/sbin/iwlist, /usr/bin/iwlist, /usr/bin/nmcli, /usr/sbin/wpa_cli, /usr/bin/wpa_cli, /usr/bin/hcitool, /usr/bin/bluetoothctl, /usr/bin/timeout\n' "$SERVICE_USER" | sudo tee "$SUDOERS" >/dev/null
-  sudo chmod 440 "$SUDOERS"
-fi
+echo "Installing passwordless sudo for $SCAN_SCRIPT ..."
+printf '%s ALL=(ALL) NOPASSWD: %s\n' "$SERVICE_USER" "$SCAN_SCRIPT" | sudo tee "$SUDOERS" >/dev/null
+sudo chmod 440 "$SUDOERS"
 
 LAUNCHER="$PREFIX/run-millie-pi.sh"
 cat > "$LAUNCHER" << EOF
 #!/usr/bin/env bash
 set -e
+export MILLIE_RF_SCAN="$SCAN_SCRIPT"
 source "$VENV/bin/activate"
 cd "$ROOT"
 exec python3 -m millie_pi --config "$CONFIG_DIR/config.yaml" "\$@"
