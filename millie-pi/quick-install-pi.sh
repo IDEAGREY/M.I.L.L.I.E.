@@ -2,7 +2,9 @@
 # Paste on Pi — one shot install. Branch: main
 set -e
 CLONE="$HOME/MILLIE"
-if [ ! -d "$CLONE/millie-pi" ]; then
+if [ -d "$CLONE/millie-pi/.git" ] || [ -d "$CLONE/.git" ]; then
+  cd "$CLONE" && git pull
+elif [ ! -d "$CLONE/millie-pi" ]; then
   sudo apt update
   sudo apt install -y git
   git clone --depth 1 -b main https://github.com/IDEAGREY/MILLIE.git "$CLONE"

@@ -9,6 +9,7 @@ from . import __version__
 from .active_node import ActiveNode
 from .config import load_config
 from .phone_client import PhoneClient
+from .rf_scanner import RfScanner
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -17,6 +18,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--config", "-c", help="Path to config.yaml")
     parser.add_argument("--discover", action="store_true", help="Find MILLIE phone and exit")
+    parser.add_argument("--test-scan", action="store_true", help="Run one WiFi/BLE scan and print results")
     parser.add_argument("--version", action="version", version=f"millie-pi {__version__}")
     args = parser.parse_args(argv)
 
@@ -26,6 +28,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     cfg = load_config(args.config)
     phone = PhoneClient(cfg.get("phone", {}).get("url", ""))
+
+    if args.test_scan:
+        import json
+
+        scanner = RfScanner(cfg)
+        result = scanner.test_scan()
+        print(json.dumps(result, indent=2))
+        if result["wifi_found"] == 0 and result["ble_found"] == 0:
+            print("\nNo RF seen — run: bash setup.sh (installs passwordless sudo for scans)", file=sys.stderr)
+            return 1
+        return 0
 
     if args.discover:
         url = phone.discover(cfg.get("phone", {}).get("scan_subnets", []))

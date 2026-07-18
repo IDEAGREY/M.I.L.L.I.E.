@@ -14,7 +14,7 @@ echo "   venv:   $VENV"
 echo "Installing system packages (enter Pi password if asked)..."
 sudo apt update
 sudo apt install -y python3 python3-venv python3-pip python3-full python3-dev git rsync \
-  wireless-tools iw bluez bluez-tools curl network-manager
+  wireless-tools iw wpasupplicant bluez bluez-tools curl network-manager
 # Optional promiscuous monitor mode (USB Alfa dongle):
 # sudo apt-get install -y aircrack-ng
 
@@ -31,6 +31,14 @@ pip install -e "$ROOT"
 if [ ! -f "$CONFIG_DIR/config.yaml" ]; then
   cp "$ROOT/config.example.yaml" "$CONFIG_DIR/config.yaml"
   echo "Wrote $CONFIG_DIR/config.yaml"
+fi
+
+# Passwordless sudo for RF scans (non-interactive subprocess needs this)
+SUDOERS="/etc/sudoers.d/millie-pi-rf"
+if [ ! -f "$SUDOERS" ]; then
+  echo "Installing passwordless sudo for RF scan tools..."
+  printf '%s ALL=(ALL) NOPASSWD: /usr/sbin/iw, /usr/bin/iw, /usr/sbin/iwlist, /usr/bin/iwlist, /usr/bin/nmcli, /usr/sbin/wpa_cli, /usr/bin/wpa_cli, /usr/bin/hcitool, /usr/bin/bluetoothctl, /usr/bin/timeout\n' "$SERVICE_USER" | sudo tee "$SUDOERS" >/dev/null
+  sudo chmod 440 "$SUDOERS"
 fi
 
 LAUNCHER="$PREFIX/run-millie-pi.sh"
@@ -55,6 +63,8 @@ chmod +x "$DISCOVER"
 echo "Verifying install..."
 source "$VENV/bin/activate"
 python3 -m millie_pi --version
+echo "Running test scan (expect wifi_found > 0 on your network)..."
+python3 -m millie_pi --config "$CONFIG_DIR/config.yaml" --test-scan 2>/dev/null || echo "  (test scan returned 0 — check wpa_cli / iwlist manually)"
 
 PI_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo ""

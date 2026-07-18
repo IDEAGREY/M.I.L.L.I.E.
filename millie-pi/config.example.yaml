@@ -9,23 +9,22 @@ phone:
   url: "http://192.168.1.213:8770"
   push_seconds: 2
 
-# Pi reads RF itself — do NOT plug ESP32 into Pi for this mode.
 esp:
   enabled: false
 
 rf:
-  wifi_iface: "wlan0"
+  wifi_iface: "auto"          # auto-detect wlan0 / wlan1
   wifi_scan: true
-  wifi_interval: 15
+  wifi_interval: 5
   ble_scan: true
-  ble_interval: 20
-  # USB Alfa / monitor dongle — set after: sudo airmon-ng start wlan1
+  ble_interval: 10
+  scan_loop_seconds: 8        # background scan thread interval
+  use_sudo: true                # requires setup.sh sudoers (passwordless iw/wpa_cli)
   monitor_iface: ""
   monitor_scan: false
   monitor_interval: 10
-  dedupe_seconds: 8
+  dedupe_seconds: 6
 
-# No Pi dashboard — phone is the only UI.
 hub:
   enabled: false
   data_dir: "~/.millie-pi"
