@@ -11,10 +11,10 @@ echo "== MILLIE Pi install =="
 echo "   source: $ROOT"
 echo "   venv:   $VENV"
 
-export DEBIAN_FRONTEND=noninteractive
-sudo apt-get update -qq || true
-sudo apt-get install -y python3 python3-venv python3-pip python3-full python3-dev git rsync \
-  wireless-tools iw bluez bluez-tools
+echo "Installing system packages (enter Pi password if asked)..."
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip python3-full python3-dev git rsync \
+  wireless-tools iw bluez bluez-tools curl
 # Optional promiscuous monitor mode (USB Alfa dongle):
 # sudo apt-get install -y aircrack-ng
 
@@ -61,7 +61,7 @@ echo ""
 echo "Done."
 echo "  Run now:     $LAUNCHER"
 echo "  Find phone:  $DISCOVER"
-echo "  Hub UI:      http://${PI_IP:-192.168.1.222}:8780/"
+echo "  Hub (optional, usually off):  http://${PI_IP:-192.168.1.222}:8780/"
 echo ""
 echo "Edit phone IP if needed:"
 echo "  nano $CONFIG_DIR/config.yaml"

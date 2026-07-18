@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# One command on the Pi (copy-paste into terminal):
-#   curl -sSL https://raw.githubusercontent.com/IDEAGREY/MILLIE/main/millie-pi/quick-install-pi.sh | bash
-set -euo pipefail
-CLONE="${MILLIE_PI_SRC:-$HOME/MILLIE}"
-if [ ! -d "$CLONE/.git" ]; then
-  git clone --depth 1 https://github.com/IDEAGREY/MILLIE.git "$CLONE"
+# Paste on Pi — one shot install. Branch: main
+set -e
+CLONE="$HOME/MILLIE"
+if [ ! -d "$CLONE/millie-pi" ]; then
+  sudo apt update
+  sudo apt install -y git
+  git clone --depth 1 -b main https://github.com/IDEAGREY/MILLIE.git "$CLONE"
 fi
 cd "$CLONE/millie-pi"
-git pull --ff-only 2>/dev/null || true
 bash setup.sh
 echo ""
-echo "Starting hub now..."
-exec "$HOME/.millie-pi-install/run-millie-pi.sh"
+echo "Next: nano ~/.millie-pi/config.yaml"
+echo "Set phone url to http://192.168.1.213:8770"
+echo "Then: ~/.millie-pi-install/run-millie-pi.sh"
