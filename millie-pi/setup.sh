@@ -14,7 +14,7 @@ echo "   venv:   $VENV"
 echo "Installing system packages (enter Pi password if asked)..."
 sudo apt update
 sudo apt install -y python3 python3-venv python3-pip python3-full python3-dev git rsync \
-  wireless-tools iw bluez bluez-tools curl
+  wireless-tools iw bluez bluez-tools curl network-manager
 # Optional promiscuous monitor mode (USB Alfa dongle):
 # sudo apt-get install -y aircrack-ng
 

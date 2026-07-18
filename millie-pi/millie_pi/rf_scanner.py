@@ -58,7 +58,20 @@ class RfScanner:
         self.wifi_interval = float(rf.get("wifi_interval", 15))
         self.ble_interval = float(rf.get("ble_interval", 20))
         self.monitor_interval = float(rf.get("monitor_interval", 10))
-        self.stats = {"wifi": 0, "ble": 0, "monitor": 0, "errors": 0}
+        self.stats: dict[str, Any] = {
+            "wifi": 0,
+            "ble": 0,
+            "monitor": 0,
+            "errors": 0,
+            "wifi_failures": 0,
+            "ble_failures": 0,
+            "last_wifi_error": "",
+            "last_ble_error": "",
+            "last_wifi_found": 0,
+            "last_ble_found": 0,
+            "last_wifi_method": "",
+            "last_ble_method": "",
+        }
 
     def _dedupe(self, key: str) -> bool:
         now = time.time()
@@ -73,22 +86,42 @@ class RfScanner:
         now = time.time()
         if self.wifi_enabled and now - self._last_wifi >= self.wifi_interval:
             self._last_wifi = now
-            for ev in self._wifi_iw_scan():
+            wifi_events, err, method = self._wifi_scan()
+            self.stats["last_wifi_found"] = len(wifi_events)
+            self.stats["last_wifi_method"] = method or ""
+            if wifi_events:
+                self.stats["last_wifi_error"] = ""
+            elif err:
+                self.stats["wifi_failures"] = int(self.stats["wifi_failures"]) + 1
+                self.stats["last_wifi_error"] = err[:160]
+                if int(self.stats["wifi_failures"]) <= 3 or int(self.stats["wifi_failures"]) % 10 == 0:
+                    log.warning("WiFi scan failed (%s): %s", method or "none", err[:120])
+            for ev in wifi_events:
                 if not self._dedupe(f"w:{ev.mac}:{ev.ssid}"):
                     events.append(ev.to_json())
-                    self.stats["wifi"] += 1
+                    self.stats["wifi"] = int(self.stats["wifi"]) + 1
         if self.ble_enabled and now - self._last_ble >= self.ble_interval:
             self._last_ble = now
-            for ev in self._ble_hcitool():
+            ble_events, err, method = self._ble_scan()
+            self.stats["last_ble_found"] = len(ble_events)
+            self.stats["last_ble_method"] = method or ""
+            if ble_events:
+                self.stats["last_ble_error"] = ""
+            elif err:
+                self.stats["ble_failures"] = int(self.stats["ble_failures"]) + 1
+                self.stats["last_ble_error"] = err[:160]
+                if int(self.stats["ble_failures"]) <= 3 or int(self.stats["ble_failures"]) % 10 == 0:
+                    log.warning("BLE scan failed (%s): %s", method or "none", err[:120])
+            for ev in ble_events:
                 if not self._dedupe(f"b:{ev.mac}"):
                     events.append(ev.to_json())
-                    self.stats["ble"] += 1
+                    self.stats["ble"] = int(self.stats["ble"]) + 1
         if self.monitor_enabled and now - self._last_monitor >= self.monitor_interval:
             self._last_monitor = now
             for ev in self._monitor_airodump():
                 if not self._dedupe(f"m:{ev.mac}:{ev.ftype}"):
                     events.append(ev.to_json())
-                    self.stats["monitor"] += 1
+                    self.stats["monitor"] = int(self.stats["monitor"]) + 1
         return events
 
     def status(self) -> dict[str, Any]:
@@ -101,21 +134,110 @@ class RfScanner:
             "stats": dict(self.stats),
         }
 
-    def _run(self, cmd: list[str], timeout: int = 25) -> str:
+    def _run(self, cmd: list[str], timeout: int = 25) -> tuple[str, str, int]:
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-            if r.returncode not in (0, 1):
-                log.debug("cmd %s rc=%s stderr=%s", cmd[0], r.returncode, r.stderr[:200])
-            return (r.stdout or "") + (r.stderr or "")
+            out = (r.stdout or "") + (r.stderr or "")
+            return out, out.strip()[-200:] if r.returncode not in (0, 1) else "", r.returncode
         except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            self.stats["errors"] += 1
-            log.debug("cmd failed: %s", exc)
-            return ""
+            self.stats["errors"] = int(self.stats["errors"]) + 1
+            return "", str(exc), -1
 
-    def _wifi_iw_scan(self) -> list[RfEvent]:
-        out = self._run(["iw", "dev", self.wifi_iface, "scan", "-u"])
-        if not out:
-            out = self._run(["sudo", "iw", "dev", self.wifi_iface, "scan", "-u"])
+    def _wifi_scan(self) -> tuple[list[RfEvent], str, str]:
+        """Try several methods — connected wlan0 often blocks plain `iw scan`."""
+        attempts: list[tuple[str, callable]] = [
+            ("nmcli", self._wifi_nmcli),
+            ("iw-trigger", self._wifi_iw_trigger_dump),
+            ("iw-scan", self._wifi_iw_blocking),
+            ("sudo-nmcli", lambda: self._wifi_nmcli(use_sudo=True)),
+            ("sudo-iw-trigger", lambda: self._wifi_iw_trigger_dump(use_sudo=True)),
+            ("sudo-iw-scan", lambda: self._wifi_iw_blocking(use_sudo=True)),
+        ]
+        errors: list[str] = []
+        for name, fn in attempts:
+            try:
+                events = fn()
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{name}: {exc}")
+                continue
+            if events:
+                return events, "", name
+            errors.append(f"{name}: 0 networks")
+        return [], "; ".join(errors[-3:]), ""
+
+    def _wifi_nmcli(self, use_sudo: bool = False) -> list[RfEvent]:
+        prefix = ["sudo"] if use_sudo else []
+        self._run(prefix + ["nmcli", "dev", "wifi", "rescan", "ifname", self.wifi_iface], timeout=8)
+        time.sleep(2.0)
+        out, err, rc = self._run(
+            prefix
+            + [
+                "nmcli",
+                "-t",
+                "-f",
+                "BSSID,SSID,CHAN,SIGNAL",
+                "dev",
+                "wifi",
+                "list",
+                "ifname",
+                self.wifi_iface,
+            ],
+            timeout=15,
+        )
+        if rc not in (0, 1) or not out.strip():
+            if err:
+                raise RuntimeError(err)
+            return []
+        events: list[RfEvent] = []
+        for line in out.splitlines():
+            parts = line.split(":")
+            if len(parts) < 8:
+                continue
+            mac = ":".join(parts[0:6]).upper()
+            if not self.MAC_RE.fullmatch(mac):
+                continue
+            ssid = ":".join(parts[6:-2])
+            try:
+                ch = int(parts[-2]) if parts[-2].strip().isdigit() else None
+            except ValueError:
+                ch = None
+            try:
+                pct = int(parts[-1])
+                rssi = -100 + pct  # nmcli 0–100 → rough dBm
+            except ValueError:
+                rssi = None
+            events.append(
+                RfEvent(
+                    kind="wifi",
+                    mac=mac,
+                    rssi=rssi,
+                    ssid=ssid,
+                    channel=ch,
+                    ftype="beacon",
+                    extra={"pi_scan": "nmcli"},
+                )
+            )
+        return events
+
+    def _wifi_iw_trigger_dump(self, use_sudo: bool = False) -> list[RfEvent]:
+        prefix = ["sudo"] if use_sudo else []
+        _, err, rc = self._run(prefix + ["iw", "dev", self.wifi_iface, "scan", "trigger"], timeout=8)
+        if rc not in (0, 1) and err:
+            raise RuntimeError(err)
+        time.sleep(2.5)
+        out, err, rc = self._run(prefix + ["iw", "dev", self.wifi_iface, "scan", "dump", "-u"], timeout=15)
+        if rc not in (0, 1) and not out.strip():
+            raise RuntimeError(err or "empty dump")
+        return self._parse_iw_scan(out)
+
+    def _wifi_iw_blocking(self, use_sudo: bool = False) -> list[RfEvent]:
+        prefix = ["sudo"] if use_sudo else []
+        out, err, rc = self._run(prefix + ["iw", "dev", self.wifi_iface, "scan", "-u"], timeout=30)
+        if rc not in (0, 1) and not out.strip():
+            raise RuntimeError(err or f"rc={rc}")
+        return self._parse_iw_scan(out)
+
+    def _parse_iw_scan(self, out: str) -> list[RfEvent]:
         if not out:
             return []
         events: list[RfEvent] = []
@@ -166,10 +288,32 @@ class RfScanner:
             return (freq - 5000) // 5
         return None
 
-    def _ble_hcitool(self) -> list[RfEvent]:
-        out = self._run(["timeout", "6", "hcitool", "lescan", "--duplicates"], timeout=10)
-        if not out:
-            out = self._run(["sudo", "timeout", "6", "hcitool", "lescan", "--duplicates"], timeout=10)
+    def _ble_scan(self) -> tuple[list[RfEvent], str, str]:
+        attempts: list[tuple[str, callable]] = [
+            ("hcitool", self._ble_hcitool),
+            ("bluetoothctl", self._ble_bluetoothctl),
+            ("sudo-hcitool", lambda: self._ble_hcitool(use_sudo=True)),
+            ("sudo-bluetoothctl", lambda: self._ble_bluetoothctl(use_sudo=True)),
+        ]
+        errors: list[str] = []
+        for name, fn in attempts:
+            try:
+                events = fn()
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{name}: {exc}")
+                continue
+            if events:
+                return events, "", name
+            errors.append(f"{name}: 0 devices")
+        return [], "; ".join(errors[-3:]), ""
+
+    def _ble_hcitool(self, use_sudo: bool = False) -> list[RfEvent]:
+        prefix = ["sudo"] if use_sudo else []
+        out, err, rc = self._run(
+            prefix + ["timeout", "6", "hcitool", "lescan", "--duplicates"], timeout=10
+        )
+        if rc not in (0, 1, 124) and not out.strip():
+            raise RuntimeError(err or f"rc={rc}")
         events: list[RfEvent] = []
         for line in out.splitlines():
             line = line.strip()
@@ -178,7 +322,29 @@ class RfScanner:
             parts = line.split()
             if len(parts) >= 2 and self.MAC_RE.fullmatch(parts[0]):
                 name = " ".join(parts[1:]) if len(parts) > 1 else ""
-                events.append(RfEvent(kind="ble", mac=parts[0].upper(), name=name, extra={"pi_scan": "hci"}))
+                events.append(
+                    RfEvent(kind="ble", mac=parts[0].upper(), name=name, extra={"pi_scan": "hci"})
+                )
+        return events
+
+    def _ble_bluetoothctl(self, use_sudo: bool = False) -> list[RfEvent]:
+        prefix = ["sudo"] if use_sudo else []
+        self._run(prefix + ["bluetoothctl", "power", "on"], timeout=5)
+        self._run(prefix + ["timeout", "7", "bluetoothctl", "scan", "on"], timeout=10)
+        out, err, rc = self._run(prefix + ["bluetoothctl", "devices"], timeout=8)
+        if rc not in (0, 1) and not out.strip():
+            raise RuntimeError(err or f"rc={rc}")
+        events: list[RfEvent] = []
+        for line in out.splitlines():
+            line = line.strip()
+            if not line.startswith("Device "):
+                continue
+            parts = line.split(None, 2)
+            if len(parts) >= 2 and self.MAC_RE.fullmatch(parts[1]):
+                name = parts[2] if len(parts) > 2 else ""
+                events.append(
+                    RfEvent(kind="ble", mac=parts[1].upper(), name=name, extra={"pi_scan": "btctl"})
+                )
         return events
 
     def _monitor_airodump(self) -> list[RfEvent]:
@@ -186,11 +352,17 @@ class RfScanner:
         out_dir = "/tmp/millie-airodump"
         self._run(["mkdir", "-p", out_dir], timeout=2)
         cmd = [
-            "sudo", "timeout", "8", "airodump-ng",
+            "sudo",
+            "timeout",
+            "8",
+            "airodump-ng",
             self.monitor_iface,
-            "--write", f"{out_dir}/snap",
-            "--output-format", "csv",
-            "--write-interval", "1",
+            "--write",
+            f"{out_dir}/snap",
+            "--output-format",
+            "csv",
+            "--write-interval",
+            "1",
         ]
         self._run(cmd, timeout=12)
         csv_files = sorted(Path(out_dir).glob("snap-*.csv"))
@@ -254,6 +426,3 @@ class RfScanner:
                     )
                 )
         return events
-
-
-# removed duplicate Path import
