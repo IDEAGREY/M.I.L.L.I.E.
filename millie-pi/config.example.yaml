@@ -1,0 +1,33 @@
+# Copy to ~/.millie-pi/config.yaml on the Pi and edit for your setup.
+#
+# Pi hub dashboard (from phone or laptop on same LAN):
+#   http://192.168.1.222:8780/
+#
+# phone.url = your ANDROID phone IP (not the Pi). Example: http://192.168.1.50:8770
+
+hub:
+  host: "0.0.0.0"
+  port: 8780
+  data_dir: "~/.millie-pi"
+
+phone:
+  # Leave empty to auto-discover MILLIE on the LAN / USB tether.
+  url: ""
+  poll_seconds: 2
+  discover: true
+  scan_subnets:
+    - "192.168.1.0/24"   # your LAN (Pi is 192.168.1.222)
+    - "192.168.42.0/24"  # USB tether
+    - "192.168.43.0/24"
+    - "192.168.0.0/24"
+
+esp:
+  # Optional: CYD plugged into the Pi instead of the phone.
+  enabled: false
+  port: ""          # e.g. /dev/ttyUSB0 — auto-detect if empty
+  baud: 115200
+
+alerts:
+  presence_tripwire: true
+  watchlist_hits: true
+  log_to_file: true

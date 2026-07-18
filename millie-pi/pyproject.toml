@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "millie-pi"
+version = "1.0.0"
+description = "MILLIE CIVOPS RF hub for Raspberry Pi"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "flask>=3.0,<4",
+  "requests>=2.31,<3",
+  "pyyaml>=6.0,<7",
+  "pyserial>=3.5,<4",
+]
+
+[project.scripts]
+millie-pi = "millie_pi.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["millie_pi*"]

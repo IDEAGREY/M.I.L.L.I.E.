@@ -1,0 +1,16 @@
+[Unit]
+Description=MILLIE Pi CIVOPS RF Hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=/home/@USER@
+ExecStart=@LAUNCHER@
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

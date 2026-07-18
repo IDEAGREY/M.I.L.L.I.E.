@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MILLIE Pi — CIVOPS Hub</title>
+<style>
+:root{--bg:#060c06;--green:#39ff14;--green-dim:#1f8a12;--red:#ff3131;--amber:#ffb000;--line:#1a3a1a;--grey:#6a8a6a}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:ui-monospace,monospace;background:var(--bg);color:var(--green);padding:12px;max-width:900px;margin:0 auto}
+h1{font-size:18px;letter-spacing:2px;margin-bottom:4px}
+.sub{font-size:11px;color:var(--green-dim);margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}
+@media(max-width:600px){.grid{grid-template-columns:1fr}}
+.card{border:1px solid var(--line);padding:10px;background:rgba(57,255,20,.03)}
+.card .lbl{font-size:10px;color:var(--green-dim)}
+.card .val{font-size:16px;margin-top:4px}
+.ok{color:var(--green)}.bad{color:var(--red)}.warn{color:var(--amber)}
+.pill{display:inline-block;padding:3px 10px;border:1px solid var(--line);font-size:12px;margin-right:6px}
+.pill.on{border-color:var(--green);box-shadow:0 0 8px rgba(57,255,20,.3)}
+.pill.alert{border-color:var(--red);color:var(--red);animation:blink .8s infinite}
+@keyframes blink{50%{opacity:.5}}
+canvas{width:100%;height:80px;display:block;border:1px solid var(--line);background:rgba(6,12,6,.9);margin:8px 0}
+h2{font-size:12px;color:var(--green-dim);letter-spacing:1px;font-weight:normal;margin:12px 0 6px}
+.btn{font-family:inherit;font-size:11px;background:transparent;color:var(--green);border:1px solid var(--green-dim);padding:6px 10px;margin:4px 4px 4px 0;cursor:pointer}
+.btn:hover{border-color:var(--green)}
+#alerts{font-size:11px;max-height:200px;overflow:auto;border:1px solid var(--line);padding:8px}
+.alert-row{padding:4px 0;border-bottom:1px solid var(--line)}
+.alert-row:last-child{border:none}
+a{color:var(--amber)}
+</style>
+</head>
+<body>
+<h1>MILLIE PI <span id="live" class="ok">●</span></h1>
+<p class="sub">CIVOPS RF hub — syncs with your Android MILLIE field unit</p>
+
+<div class="grid">
+  <div class="card"><div class="lbl">Phone link</div><div class="val" id="phone-link">—</div></div>
+  <div class="card"><div class="lbl">Last sync</div><div class="val" id="last-sync">—</div></div>
+  <div class="card"><div class="lbl">Wall Sense</div><div class="val" id="ws-status">—</div></div>
+  <div class="card"><div class="lbl">USB / CIVOPS</div><div class="val" id="civops-status">—</div></div>
+</div>
+
+<p>
+  <span class="pill" id="pill-pres">—</span>
+  <a id="phone-dash" href="#" target="_blank" style="display:none">Open phone dashboard →</a>
+</p>
+
+<h2>MOTION (Pi archive)</h2>
+<canvas id="cv-motion" width="860" height="80"></canvas>
+<h2>VARIANCE</h2>
+<canvas id="cv-var" width="860" height="80"></canvas>
+<h2>PRESENCE TIMELINE</h2>
+<canvas id="cv-pres" width="860" height="48"></canvas>
+
+<div style="margin-top:10px">
+  <button class="btn" onclick="wsCmd('on')">▶ Start (phone)</button>
+  <button class="btn" onclick="wsCmd('off')">■ Stop</button>
+  <button class="btn" onclick="wsCmd('calibrate')">◎ Calibrate</button>
+</div>
+
+<h2>RECENT ALERTS</h2>
+<div id="alerts">loading…</div>
+
+<script>
+async function j(url,opts){const r=await fetch(url,opts);return r.json();}
+function draw(canvas, rows, key, opts={}){
+  if(!canvas||!rows.length)return;
+  const ctx=canvas.getContext('2d'), W=canvas.width, H=canvas.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='rgba(6,12,6,.95)'; ctx.fillRect(0,0,W,H);
+  const vals=rows.map(r=>Number(r[key]??0));
+  const minV=opts.min!=null?opts.min:Math.min(...vals);
+  const maxV=opts.max!=null?opts.max:Math.max(...vals,minV+0.01);
+  const range=maxV-minV||1;
+  const col=opts.color||'#39ff14';
+  ctx.beginPath();
+  vals.forEach((v,i)=>{const x=i/(vals.length-1||1)*(W-4)+2;const y=H-4-((v-minV)/range)*(H-8);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});
+  ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.stroke();
+}
+async function wsCmd(action){
+  try{await j('/api/hub/phone/wallsense',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});}
+  catch(e){alert('Command failed — is the phone linked?');}
+}
+async function tick(){
+  try{
+    const st=await j('/api/hub/status');
+    const linked=st.phone_linked;
+    document.getElementById('phone-link').innerHTML=linked?`<span class="ok">LINKED</span><br><small>${st.phone_url||''}</small>`:`<span class="bad">OFFLINE</span>`;
+    document.getElementById('last-sync').textContent=st.last_sync_ago_s!=null?`${st.last_sync_ago_s}s ago`:'never';
+    const ws=st.wallsense||{};
+    const pres=ws.presence&&ws.enabled;
+    document.getElementById('ws-status').innerHTML=ws.enabled?(pres?'<span class="bad">PRESENCE</span>':'<span class="ok">CLEAR</span>'):'off';
+    document.getElementById('civops-status').textContent=(st.usb_connected?'USB ':'')+(st.civops_active?'CIVOPS':'idle');
+    const pill=document.getElementById('pill-pres');
+    pill.textContent=!ws.enabled?'WALL OFF':(pres?'PRESENCE':'CLEAR');
+    pill.className='pill '+(pres?'alert on':'on');
+    if(st.phone_url){
+      const a=document.getElementById('phone-dash');
+      a.href=st.phone_url+'/';
+      a.style.display='inline';
+    }
+    const hist=await j('/api/hub/history/wallsense?limit=300');
+    const samples=hist.samples||[];
+    draw(document.getElementById('cv-motion'),samples,'motion',{color:pres?'#ff3131':'#39ff14'});
+    draw(document.getElementById('cv-var'),samples,'variance',{color:'#ffb000'});
+    draw(document.getElementById('cv-pres'),samples,'presence',{min:0,max:1,color:'#ff3131'});
+    const al=await j('/api/hub/alerts?limit=20');
+    const box=document.getElementById('alerts');
+    if(!al.alerts||!al.alerts.length){box.textContent='No alerts yet.';}
+    else{
+      box.innerHTML=al.alerts.map(a=>`<div class="alert-row"><span class="${a.severity==='HIGH'?'bad':'warn'}">${a.severity}</span> [${a.source}] ${a.title}: ${a.body}</div>`).join('');
+    }
+  }catch(e){document.getElementById('phone-link').innerHTML='<span class="bad">HUB ERROR</span>';}
+}
+setInterval(tick,1500); tick();
+</script>
+</body>
+</html>
